@@ -18,7 +18,7 @@ st.set_page_config(
 def load_sentiment_model():
     return pipeline(
         "sentiment-analysis",
-        model="distilbert-base-uncased-finetuned-sst-2-english",
+        model="ProsusAI/finbert",
         truncation=True,
         max_length=512
     )
@@ -59,7 +59,7 @@ def run_sentiment(df, text_col):
 # --- Sidebar ---
 st.sidebar.title("HN AI Sentiment Tracker")
 st.sidebar.markdown("Hacker News top stories analyzed in real-time.")
-page = st.sidebar.radio("View", ["Overview", "Stories", "Comments"])
+page = st.sidebar.radio("View", ["Overview", "Stories", "Comments", "Trends"])
 
 # --- Overview ---
 if page == "Overview":
@@ -68,8 +68,8 @@ if page == "Overview":
     stories = load_stories()
     stories = run_sentiment(stories, "title")
 
-    pos = stories[stories["sentiment"] == "POSITIVE"]
-    neg = stories[stories["sentiment"] == "NEGATIVE"]
+    pos = stories[stories["sentiment"] == "positive"]
+    neg = stories[stories["sentiment"] == "negative"]
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total stories", len(stories))
@@ -88,7 +88,7 @@ if page == "Overview":
         fig = px.pie(
             counts, names="sentiment", values="count",
             color="sentiment",
-            color_discrete_map={"POSITIVE": "#1D9E75", "NEGATIVE": "#D85A30"}
+            color_discrete_map={"positive": "#1D9E75", "negative": "#D85A30"}
         )
         fig.update_layout(showlegend=True, height=300)
         st.plotly_chart(fig, use_container_width=True)
@@ -99,7 +99,7 @@ if page == "Overview":
         fig2 = px.bar(
             avg, x="sentiment", y="score",
             color="sentiment",
-            color_discrete_map={"POSITIVE": "#1D9E75", "NEGATIVE": "#D85A30"}
+            color_discrete_map={"positive": "#1D9E75", "negative": "#D85A30"}
         )
         fig2.update_layout(showlegend=False, height=300)
         st.plotly_chart(fig2, use_container_width=True)
@@ -115,7 +115,7 @@ elif page == "Stories":
     stories = load_stories()
     stories = run_sentiment(stories, "title")
 
-    sentiment_filter = st.selectbox("Filter by sentiment", ["All", "POSITIVE", "NEGATIVE"])
+    sentiment_filter = st.selectbox("Filter by sentiment", ["All", "positive", "negative"])
     if sentiment_filter != "All":
         stories = stories[stories["sentiment"] == sentiment_filter]
 
@@ -138,7 +138,7 @@ elif page == "Comments":
     with col1:
         st.metric("Total comments", len(comments))
     with col2:
-        pos_pct = round(len(comments[comments["sentiment"]=="POSITIVE"]) / len(comments) * 100)
+        pos_pct = round(len(comments[comments["sentiment"]=="positive"]) / len(comments) * 100)
         st.metric("Positive comments", f"{pos_pct}%")
 
     st.subheader("Comment sentiment by story")
@@ -157,3 +157,74 @@ elif page == "Comments":
     st.subheader("Sample comments")
     sample = comments.sample(min(10, len(comments)))[["story_title", "clean_text", "sentiment", "confidence"]]
     st.dataframe(sample, use_container_width=True, hide_index=True)
+    
+elif page == "Trends":
+    st.title("📈 Trends")
+
+    conn = sqlite3.connect(DB_PATH)
+    df = pd.read_sql("""
+        SELECT
+            date(datetime(created_at, 'unixepoch')) as date,
+            COUNT(*) as story_count,
+            AVG(score) as avg_score,
+            AVG(num_comments) as avg_comments
+        FROM stories
+        GROUP BY date
+        ORDER BY date
+    """, conn)
+    conn.close()
+
+    if len(df) < 2:
+        st.info("Not enough data yet for trend analysis. The scheduler will collect more data every 6 hours.")
+        st.metric("Days of data collected", len(df))
+        st.metric("Total stories", df["story_count"].sum() if len(df) > 0 else 0)
+    else:
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("Stories per day")
+            fig = px.bar(df, x="date", y="story_count", color_discrete_sequence=["#1D9E75"])
+            fig.update_layout(height=300, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col2:
+            st.subheader("Avg score per day")
+            fig2 = px.line(df, x="date", y="avg_score", color_discrete_sequence=["#D85A30"], markers=True)
+            fig2.update_layout(height=300, showlegend=False)
+            st.plotly_chart(fig2, use_container_width=True)
+
+        st.subheader("Avg comments per day")
+        fig3 = px.line(df, x="date", y="avg_comments", color_discrete_sequence=["#378ADD"], markers=True)
+        fig3.update_layout(height=300, showlegend=False)
+        st.plotly_chart(fig3, use_container_width=True)
+
+    # Top keywords
+    st.subheader("Top keywords in titles")
+    conn = sqlite3.connect(DB_PATH)
+    titles = pd.read_sql("SELECT title FROM stories", conn)["title"].tolist()
+    conn.close()
+
+    stopwords = {"the","a","an","of","in","to","and","for","is","are","that",
+                 "it","with","on","at","by","from","as","how","my","i","we",
+                 "its","this","your","our","their","was","be","or","not","can",
+                 "but","so","about","has","have","what","why","–","-"}
+
+    words = []
+    for title in titles:
+        for word in title.lower().split():
+            word = word.strip(".,!?:;\"'()")
+            if word and word not in stopwords and len(word) > 2:
+                words.append(word)
+
+    word_freq = pd.Series(words).value_counts().head(20).reset_index()
+    word_freq.columns = ["word", "count"]
+
+    fig4 = px.bar(
+        word_freq, x="count", y="word",
+        orientation="h",
+        color="count",
+        color_continuous_scale=["#9FE1CB", "#0F6E56"],
+        height=500
+    )
+    fig4.update_layout(showlegend=False, yaxis={"categoryorder": "total ascending"})
+    st.plotly_chart(fig4, use_container_width=True)
