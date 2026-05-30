@@ -1,0 +1,5 @@
+hn_data.db
+__pycache__/
+.venv/
+*.pyc
+.env
