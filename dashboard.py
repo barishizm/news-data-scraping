@@ -5,6 +5,7 @@ import plotly.express as px
 import html
 import re
 from transformers import pipeline
+import os
 
 DB_PATH = "hn_data.db"
 
@@ -25,6 +26,8 @@ def load_sentiment_model():
 
 @st.cache_data(ttl=300)
 def load_stories():
+    if not os.path.exists(DB_PATH):
+        return pd.DataFrame(columns=["id","title","score","by","created_at","url","num_comments","fetched_at"])
     conn = sqlite3.connect(DB_PATH)
     df = pd.read_sql("SELECT * FROM stories ORDER BY score DESC", conn)
     conn.close()
@@ -32,6 +35,8 @@ def load_stories():
 
 @st.cache_data(ttl=300)
 def load_comments():
+    if not os.path.exists(DB_PATH):
+        return pd.DataFrame(columns=["id","story_id","text","by","created_at","fetched_at","story_title"])
     conn = sqlite3.connect(DB_PATH)
     df = pd.read_sql("""
         SELECT c.*, s.title as story_title
@@ -66,6 +71,11 @@ if page == "Overview":
     st.title("📡 Hacker News Sentiment Dashboard")
 
     stories = load_stories()
+
+    if stories.empty:
+        st.info("No data yet. Run collect.py locally to populate the database.")
+        st.stop()
+
     stories = run_sentiment(stories, "title")
 
     pos = stories[stories["sentiment"] == "positive"]
@@ -113,6 +123,11 @@ elif page == "Stories":
     st.title("📰 Stories")
 
     stories = load_stories()
+
+    if stories.empty:
+        st.info("No data yet. Run collect.py locally to populate the database.")
+        st.stop()
+
     stories = run_sentiment(stories, "title")
 
     sentiment_filter = st.selectbox("Filter by sentiment", ["All", "positive", "negative"])
@@ -130,6 +145,11 @@ elif page == "Comments":
     st.title("💬 Comments")
 
     comments = load_comments()
+
+    if comments.empty:
+        st.info("No data yet. Run collect.py locally to populate the database.")
+        st.stop()
+
     comments["clean_text"] = comments["text"].apply(clean_html)
     comments = comments[comments["clean_text"].str.len() > 20]
     comments = run_sentiment(comments, "clean_text")
@@ -160,6 +180,10 @@ elif page == "Comments":
     
 elif page == "Trends":
     st.title("📈 Trends")
+
+    if not os.path.exists(DB_PATH):
+        st.info("No data yet. Run collect.py locally to populate the database.")
+        st.stop()
 
     conn = sqlite3.connect(DB_PATH)
     df = pd.read_sql("""
