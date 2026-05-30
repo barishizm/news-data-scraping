@@ -64,7 +64,7 @@ def run_sentiment(df, text_col):
 # --- Sidebar ---
 st.sidebar.title("HN AI Sentiment Tracker")
 st.sidebar.markdown("Hacker News top stories analyzed in real-time.")
-page = st.sidebar.radio("View", ["Overview", "Stories", "Comments", "Trends"])
+page = st.sidebar.radio("View", ["Overview", "AI Companies", "Stories", "Comments", "Trends"])
 
 # --- Overview ---
 if page == "Overview":
@@ -117,6 +117,71 @@ if page == "Overview":
     st.subheader("Top 15 stories")
     top15 = stories.nlargest(15, "score")[["title", "score", "num_comments", "sentiment", "confidence"]]
     st.dataframe(top15, use_container_width=True, hide_index=True)
+
+# --- AI Companies ---
+elif page == "AI Companies":
+    st.title("🏢 AI Companies")
+
+    stories = load_stories()
+
+    if stories.empty:
+        st.info("No data yet. Run collect.py locally to populate the database.")
+        st.stop()
+
+    if "company" not in stories.columns:
+        stories["company"] = "other"
+    stories["company"] = stories["company"].fillna("other")
+
+    stories = run_sentiment(stories, "title")
+
+    SENTIMENT_COLORS = {
+        "positive": "#1D9E75",
+        "neutral": "#378ADD",
+        "negative": "#D85A30",
+    }
+
+    col_left, col_right = st.columns(2)
+
+    with col_left:
+        st.subheader("Stories per company")
+        counts = stories["company"].value_counts().reset_index()
+        counts.columns = ["company", "count"]
+        fig = px.bar(
+            counts, x="company", y="count",
+            color="company", text="count"
+        )
+        fig.update_layout(showlegend=False, height=350, xaxis_title="", yaxis_title="Stories")
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col_right:
+        st.subheader("Avg score per company")
+        avg = stories.groupby("company")["score"].mean().reset_index()
+        avg = avg.sort_values("score", ascending=False)
+        fig2 = px.bar(
+            avg, x="company", y="score",
+            color="company", text=avg["score"].round(0)
+        )
+        fig2.update_layout(showlegend=False, height=350, xaxis_title="", yaxis_title="Avg score")
+        st.plotly_chart(fig2, use_container_width=True)
+
+    st.subheader("Sentiment breakdown per company")
+    breakdown = stories.groupby(["company", "sentiment"]).size().reset_index(name="count")
+    fig3 = px.bar(
+        breakdown, x="company", y="count",
+        color="sentiment", barmode="stack",
+        color_discrete_map=SENTIMENT_COLORS
+    )
+    fig3.update_layout(height=400, xaxis_title="", yaxis_title="Stories")
+    st.plotly_chart(fig3, use_container_width=True)
+
+    st.subheader("Top 5 stories per company")
+    for company in counts["company"]:
+        top5 = (
+            stories[stories["company"] == company]
+            .nlargest(5, "score")[["title", "score", "num_comments", "sentiment", "confidence"]]
+        )
+        st.markdown(f"**{company}**")
+        st.dataframe(top5, use_container_width=True, hide_index=True)
 
 # --- Stories ---
 elif page == "Stories":

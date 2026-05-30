@@ -6,6 +6,37 @@ from datetime import datetime
 
 DB_PATH = "hn_data.db"
 
+# Keywords used to decide whether a story is about AI.
+AI_KEYWORDS = [
+    "openai", "anthropic", "google deepmind", "gpt", "claude", "gemini",
+    "llm", "chatgpt", "mistral", "ai agent", "machine learning",
+    "deep learning", "transformer", "diffusion model", "rag"
+]
+
+def is_ai_related(title):
+    """Return True if the title mentions any AI-related keyword."""
+    if not title:
+        return False
+    title_lower = title.lower()
+    return any(keyword in title_lower for keyword in AI_KEYWORDS)
+
+def detect_company(title):
+    """Map a title to the AI company it is most likely about."""
+    if not title:
+        return "other"
+    t = title.lower()
+    if "openai" in t or "chatgpt" in t or "gpt" in t:
+        return "OpenAI"
+    if "claude" in t or "anthropic" in t:
+        return "Anthropic"
+    if "gemini" in t or "deepmind" in t or "google ai" in t:
+        return "Google"
+    if "mistral" in t:
+        return "Mistral"
+    if "llama" in t or "meta ai" in t:
+        return "Meta"
+    return "other"
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -18,9 +49,14 @@ def init_db():
             created_at INTEGER,
             url TEXT,
             num_comments INTEGER,
-            fetched_at TEXT
+            fetched_at TEXT,
+            company TEXT DEFAULT 'other'
         )
     """)
+    # Migrate older databases that predate the "company" column.
+    cols = [row[1] for row in cursor.execute("PRAGMA table_info(stories)").fetchall()]
+    if "company" not in cols:
+        cursor.execute("ALTER TABLE stories ADD COLUMN company TEXT DEFAULT 'other'")
     conn.commit()
     conn.close()
     print("Database initialized.")
@@ -28,7 +64,7 @@ def init_db():
 def get_top_story_ids():
     url = "https://hacker-news.firebaseio.com/v0/topstories.json"
     response = requests.get(url)
-    return response.json()[:100]
+    return response.json()[:200]
 
 def get_story_detail(story_id):
     url = f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
@@ -43,8 +79,8 @@ def save_stories(stories):
     for story in stories:
         cursor.execute("""
             INSERT OR IGNORE INTO stories
-            (id, title, score, by, created_at, url, num_comments, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (id, title, score, by, created_at, url, num_comments, fetched_at, company)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             story["id"],
             story["title"],
@@ -53,7 +89,8 @@ def save_stories(stories):
             story["created_at"],
             story["url"],
             story["num_comments"],
-            story["fetched_at"]
+            story["fetched_at"],
+            story["company"]
         ))
         if cursor.rowcount > 0:
             new_count += 1
@@ -71,22 +108,27 @@ def fetch_and_store():
         story = get_story_detail(story_id)
 
         if story and story.get("type") == "story":
-            stories.append({
-                "id": story.get("id"),
-                "title": story.get("title"),
-                "score": story.get("score"),
-                "by": story.get("by"),
-                "created_at": story.get("time"),
-                "url": story.get("url", ""),
-                "num_comments": story.get("descendants", 0),
-                "fetched_at": datetime.utcnow().isoformat()
-            })
+            title = story.get("title")
+            # Only keep stories that are about AI.
+            if is_ai_related(title):
+                stories.append({
+                    "id": story.get("id"),
+                    "title": title,
+                    "score": story.get("score"),
+                    "by": story.get("by"),
+                    "created_at": story.get("time"),
+                    "url": story.get("url", ""),
+                    "num_comments": story.get("descendants", 0),
+                    "fetched_at": datetime.utcnow().isoformat(),
+                    "company": detect_company(title)
+                })
 
         if i % 20 == 0:
-            print(f"  Progress: {i}/100...")
+            print(f"  Progress: {i}/{len(story_ids)}...")
 
         time.sleep(0.1)
 
+    print(f"  Found {len(stories)} AI-related stories out of {len(story_ids)} fetched.")
     new_count = save_stories(stories)
     print(f"  Done! {new_count} new stories saved to database.")
 
