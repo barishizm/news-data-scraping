@@ -1,7 +1,0 @@
-hn_data.db
-*.csv
-*.html
-__pycache__/
-.venv/
-*.pyc
-.env
